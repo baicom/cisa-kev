@@ -1,0 +1,31 @@
+services:
+  kev:
+    build: .
+    image: cisa-kev
+    restart: unless-stopped
+    environment:
+      USERS: ${USERS:-}
+      KEV_REFRESH_HOURS: ${KEV_REFRESH_HOURS:-24}          # update incremental; 0 = desactivado
+      KEV_FULL_REFRESH_DAYS: ${KEV_FULL_REFRESH_DAYS:-7}   # resync completo periodico
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    ports:
+      - "${PORT:-3001}:8080"   # exponer detras de un proxy TLS; basic auth sin TLS viaja en claro
+    volumes:
+      - kev-data:/data
+
+  # CLI: docker compose run --rm cli search log4j
+  cli:
+    build: .
+    image: cisa-kev
+    profiles: ["cli"]
+    entrypoint: ["python3", "/app/kev.py"]
+    volumes:
+      - kev-data:/data
+
+volumes:
+  kev-data:

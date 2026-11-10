@@ -1,0 +1,4 @@
+.env
+kev_cache.db*
+__pycache__
+update.sh
