@@ -202,21 +202,31 @@ def show_rows(rows, as_json):
     print(f"\n{len(rows)} resultado(s)")
 
 
+MAX_TERMS, MAX_LEN, MAX_DAYS = 8, 100, 3650
+
+
+def like(v):
+    """Patron LIKE literal: escapa % _ \\ (se usa con ESCAPE '\\') y limita el largo."""
+    v = str(v)[:MAX_LEN].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{v}%"
+
+
 def query_rows(c, terms=(), vendor=None, product=None, ransomware=False, severity=None,
                min_score=None, since=None, days=None, limit=25, vendor_exact=False, product_exact=False,
                offset=0, with_total=False):
     where, args = [], []
-    for term in terms:  # todos los terminos deben aparecer (AND), en cualquier campo
-        where.append("(cve LIKE ? OR vendor LIKE ? OR product LIKE ? OR name LIKE ? OR raw LIKE ?)")
-        args += [f"%{term}%"] * 5
+    for term in list(terms)[:MAX_TERMS]:  # todos los terminos deben aparecer (AND), en cualquier campo
+        where.append("(cve LIKE ? ESCAPE '\\' OR vendor LIKE ? ESCAPE '\\' OR product LIKE ? ESCAPE '\\'"
+                     " OR name LIKE ? ESCAPE '\\' OR raw LIKE ? ESCAPE '\\')")
+        args += [like(term)] * 5
     if vendor and vendor_exact:
-        where.append("vendor = ? COLLATE NOCASE"); args.append(vendor)
+        where.append("vendor = ? COLLATE NOCASE"); args.append(str(vendor)[:MAX_LEN])
     elif vendor:
-        where.append("vendor LIKE ?"); args.append(f"%{vendor}%")
+        where.append("vendor LIKE ? ESCAPE '\\'"); args.append(like(vendor))
     if product and product_exact:
-        where.append("product = ? COLLATE NOCASE"); args.append(product)
+        where.append("product = ? COLLATE NOCASE"); args.append(str(product)[:MAX_LEN])
     elif product:
-        where.append("product LIKE ?"); args.append(f"%{product}%")
+        where.append("product LIKE ? ESCAPE '\\'"); args.append(like(product))
     if ransomware:
         where.append("ransomware='Known'")
     if severity:
@@ -225,8 +235,8 @@ def query_rows(c, terms=(), vendor=None, product=None, ransomware=False, severit
         where.append("score>=?"); args.append(min_score)
     if since:
         where.append("added>=?"); args.append(since)
-    if days:
-        where.append("added>=?"); args.append((date.today() - timedelta(days=days)).isoformat())
+    if days and days > 0:
+        where.append("added>=?"); args.append((date.today() - timedelta(days=min(days, MAX_DAYS))).isoformat())
     cond = (" WHERE " + " AND ".join(where)) if where else ""
     rows = c.execute(f"SELECT * FROM kev{cond} ORDER BY added DESC, cve DESC LIMIT ? OFFSET ?",
                      args + [limit, offset]).fetchall()
@@ -492,14 +502,14 @@ def make_handler(users, lock):
                             return d
                     per = max(1, min(num("limit", int, 50), 500))
                     page = max(1, num("page", int, 1))
-                    rows, total = query_rows(c, q.get("q", "").split(), q.get("vendor"), q.get("product"),
+                    rows, total = query_rows(c, q.get("q", "")[:500].split(), q.get("vendor"), q.get("product"),
                                              bool(q.get("ransomware")), q.get("severity"), num("min_score", float),
                                              q.get("since"), num("days", int), per,
                                              vendor_exact=bool(q.get("vendor_exact")), product_exact=bool(q.get("product_exact")),
                                              offset=(page - 1) * per, with_total=True)
                     if total and not rows:  # pagina fuera de rango: ir a la ultima
                         page = -(-total // per)
-                        rows = query_rows(c, q.get("q", "").split(), q.get("vendor"), q.get("product"),
+                        rows = query_rows(c, q.get("q", "")[:500].split(), q.get("vendor"), q.get("product"),
                                           bool(q.get("ransomware")), q.get("severity"), num("min_score", float),
                                           q.get("since"), num("days", int), per,
                                           vendor_exact=bool(q.get("vendor_exact")), product_exact=bool(q.get("product_exact")), offset=(page - 1) * per)
