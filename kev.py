@@ -203,14 +203,19 @@ def show_rows(rows, as_json):
 
 
 def query_rows(c, terms=(), vendor=None, product=None, ransomware=False, severity=None,
-               min_score=None, since=None, days=None, limit=25):
+               min_score=None, since=None, days=None, limit=25, vendor_exact=False, product_exact=False,
+               offset=0, with_total=False):
     where, args = [], []
     for term in terms:  # todos los terminos deben aparecer (AND), en cualquier campo
         where.append("(cve LIKE ? OR vendor LIKE ? OR product LIKE ? OR name LIKE ? OR raw LIKE ?)")
         args += [f"%{term}%"] * 5
-    if vendor:
+    if vendor and vendor_exact:
+        where.append("vendor = ? COLLATE NOCASE"); args.append(vendor)
+    elif vendor:
         where.append("vendor LIKE ?"); args.append(f"%{vendor}%")
-    if product:
+    if product and product_exact:
+        where.append("product = ? COLLATE NOCASE"); args.append(product)
+    elif product:
         where.append("product LIKE ?"); args.append(f"%{product}%")
     if ransomware:
         where.append("ransomware='Known'")
@@ -222,9 +227,12 @@ def query_rows(c, terms=(), vendor=None, product=None, ransomware=False, severit
         where.append("added>=?"); args.append(since)
     if days:
         where.append("added>=?"); args.append((date.today() - timedelta(days=days)).isoformat())
-    sql = "SELECT * FROM kev" + (" WHERE " + " AND ".join(where) if where else "")
-    sql += " ORDER BY added DESC, cve DESC LIMIT ?"
-    return c.execute(sql, args + [limit]).fetchall()
+    cond = (" WHERE " + " AND ".join(where)) if where else ""
+    rows = c.execute(f"SELECT * FROM kev{cond} ORDER BY added DESC, cve DESC LIMIT ? OFFSET ?",
+                     args + [limit, offset]).fetchall()
+    if with_total:
+        return rows, c.execute(f"SELECT COUNT(*) FROM kev{cond}", args).fetchone()[0]
+    return rows
 
 
 def cmd_search(a, c):
@@ -312,6 +320,9 @@ th{color:var(--mut);font-weight:600;font-size:13px}tr.r{cursor:pointer}tr.r:hove
 .dg ul{margin:0;padding-left:18px}.dg li{margin:0 0 5px}.dg a{color:var(--acc)}
 @media(max-width:600px){.dg{grid-template-columns:1fr;gap:2px}.dl{margin-top:8px}}
 .tw{overflow-x:auto}
+.dy{display:flex;align-items:center;gap:6px;color:var(--mut)}
+.pg{display:flex;gap:8px;align-items:center;justify-content:center;margin:14px 0;flex-wrap:wrap}.pg button:disabled{opacity:.4;cursor:default}
+.mut a{color:var(--acc)}a.vl{color:inherit}a.vl:hover{color:var(--acc)}
 footer{margin:28px 0 8px;text-align:center;font-size:13px;color:var(--mut)}
 footer a{color:var(--mut)}footer a:hover{color:var(--fg)}
 .sev{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent)}
@@ -321,23 +332,37 @@ footer a{color:var(--mut)}footer a:hover{color:var(--fg)}
 <form id="f"><input name="q" placeholder="log4j, fortinet, CVE-2024-... (terminos AND)" autofocus>
 <input name="vendor" placeholder="vendor" size="12"><input name="product" placeholder="producto" size="12">
 <select name="severity"><option value="">severidad</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>
-<input name="days" type="number" min="1" placeholder="ultimos N dias" style="width:130px">
+<label class="dy" title="vaciar el campo para ver todo el catalogo">ultimos <input name="days" type="number" min="1" placeholder="todo" style="width:70px"> dias</label>
 <label><input type="checkbox" name="ransomware" value="1"> ransomware</label>
 <button>Buscar</button></form>
 <div class="tw"><table><thead><tr><th>CVE</th><th>Agregado</th><th>CVSS</th><th>Ransom.</th><th>Vendor / Producto</th><th>Nombre</th></tr></thead>
-<tbody id="b"></tbody></table></div></div>
+<tbody id="b"></tbody></table></div><div id="pg" class="pg"></div></div>
 <script>
 const $=s=>document.querySelector(s),esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let VENDOR_EXACT="",PRODUCT_EXACT="";
 const SEV=new Set(["CRITICAL","HIGH","MEDIUM","LOW"]);
-async function go(){
+let PAGE_N=Math.max(1,parseInt(new URLSearchParams(location.search).get("page"))||1);
+function setUrlPage(n){const u=new URL(location.href);
+  if(n>1)u.searchParams.set("page",n);else u.searchParams.delete("page");
+  if(u.href!==location.href)history.replaceState(null,"",u)}
+window.onpopstate=()=>{PAGE_N=Math.max(1,parseInt(new URLSearchParams(location.search).get("page"))||1);go()};
+async function go(n){
+  if(n)PAGE_N=n;
   const p=new URLSearchParams();for(const [k,v] of new FormData($("#f")))if(v)p.set(k,v);
+  if(VENDOR_EXACT&&p.get("vendor")===VENDOR_EXACT)p.set("vendor_exact","1");
+  if(PRODUCT_EXACT&&p.get("product")===PRODUCT_EXACT)p.set("product_exact","1");
+  p.set("page",PAGE_N);
   const r=await fetch("/api/search?"+p);if(!r.ok){$("#b").innerHTML="<tr><td colspan=6>Error "+r.status+"</td></tr>";return}
-  const d=await r.json();$("#meta").textContent=d.count+" resultado(s) - cache: "+d.cache;
+  const d=await r.json();PAGE_N=d.page;setUrlPage(d.page);$("#meta").textContent=d.count+" resultado(s) - pagina "+d.page+" de "+d.pages+" - cache: "+d.cache;
+  $("#pg").innerHTML=d.pages>1?`<button data-p="1" ${d.page<=1?"disabled":""}>&laquo;</button><button data-p="${d.page-1}" ${d.page<=1?"disabled":""}>&lsaquo; Anterior</button>
+   <span class="mut">${d.page} / ${d.pages}</span><button data-p="${d.page+1}" ${d.page>=d.pages?"disabled":""}>Siguiente &rsaquo;</button><button data-p="${d.pages}" ${d.page>=d.pages?"disabled":""}>&raquo;</button>`:"";
   $("#b").innerHTML=d.results.map(x=>`<tr class="r" data-c="${esc(x.cve)}"><td>${esc(x.cve)}</td><td>${esc(x.added)}</td>
   <td>${esc(x.score)} ${x.severity?`<br><span class="sev ${SEV.has(x.severity)?"sev-"+x.severity:"mut"}">${esc(x.severity)}</span>`:""}</td><td class="${x.ransomware=="Known"?"ran":"mut"}">${x.ransomware=="Known"?"SI":"-"}</td>
-  <td>${esc(x.vendor)} / ${esc(x.product)}</td><td>${esc(x.name)}</td></tr>`).join("")||"<tr><td colspan=6>Sin resultados</td></tr>";
+  <td><a class="vl" href="/vendor/${encodeURIComponent(x.vendor)}">${esc(x.vendor)}</a> / <a class="vl" href="/product/${encodeURIComponent(x.product)}">${esc(x.product)}</a></td><td>${esc(x.name)}</td></tr>`).join("")||"<tr><td colspan=6>Sin resultados</td></tr>";
 }
-$("#f").onsubmit=e=>{e.preventDefault();go()};
+$("#f").onsubmit=e=>{e.preventDefault();go(1)};
+$("#pg").onclick=e=>{const b=e.target.closest("button[data-p]");if(b&&!b.disabled){const u=new URL(location.href);+b.dataset.p>1?u.searchParams.set("page",b.dataset.p):u.searchParams.delete("page");
+  history.pushState(null,"",u);go(+b.dataset.p);window.scrollTo(0,0)}};
 function detailGrid(k){
    const row=(l,v)=>v?`<div class="dl">${l}</div><div>${v}</div>`:"";
    const link=u=>`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`;
@@ -362,7 +387,18 @@ if(mv){
      <p class="mut">${esc(k.vendorProject)} / ${esc(k.product)} - agregado ${esc(k.dateAdded)}</p>
      <p>CVSS ${esc(k._score??"-")} ${sv?`<span class="sev ${SEV.has(sv)?"sev-"+sv:"mut"}">${esc(sv)}</span>`:""}
      &nbsp; Ransomware: <b class="${k.knownRansomwareCampaignUse=="Known"?"ran":"mut"}">${k.knownRansomwareCampaignUse=="Known"?"SI":"no conocido"}</b></p>`+detailGrid(k)})
-}else go();
+}else{
+  const vm=location.pathname.match(/^\\/vendor\\/([^/]+)\\/?$/i);
+  if(vm){try{VENDOR_EXACT=decodeURIComponent(vm[1])}catch(e){VENDOR_EXACT=vm[1]}
+    $("#f").vendor.value=VENDOR_EXACT;document.title=VENDOR_EXACT+" - CISA KEV";
+    $("h1").insertAdjacentHTML("afterend",`<p class="mut">Vendor: <b>${esc(VENDOR_EXACT)}</b> - <a href="/">quitar filtro</a></p>`)}
+  const pm=location.pathname.match(/^\\/product\\/([^/]+)\\/?$/i);
+  if(pm){try{PRODUCT_EXACT=decodeURIComponent(pm[1])}catch(e){PRODUCT_EXACT=pm[1]}
+    $("#f").product.value=PRODUCT_EXACT;document.title=PRODUCT_EXACT+" - CISA KEV";
+    $("h1").insertAdjacentHTML("afterend",`<p class="mut">Producto: <b>${esc(PRODUCT_EXACT)}</b> - <a href="/">quitar filtro</a></p>`)}
+  if(!vm&&!pm)$("#f").days.value=30;  // portada: ultimos 30 dias (vaciar el campo para ver todo)
+  go();
+}
 </script>
 <footer><a href="https://github.com/baicom/cisa-kev" target="_blank" rel="noopener noreferrer">github</a></footer>
 </main></body></html>"""
@@ -444,7 +480,7 @@ def make_handler(users, lock):
                 return
             u = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
-            if u.path == "/" or re.fullmatch(r"/vuln/CVE-\d{4}-\d+/?", u.path, re.I):
+            if u.path == "/" or re.fullmatch(r"/(vuln/CVE-\d{4}-\d+|vendor/[^/]+|product/[^/]+)/?", u.path, re.I):
                 return self.send(200, PAGE, "text/html; charset=utf-8")
             c = db()
             try:
@@ -454,11 +490,22 @@ def make_handler(users, lock):
                             return t(q[k]) if q.get(k) else d
                         except ValueError:
                             return d
-                    rows = query_rows(c, q.get("q", "").split(), q.get("vendor"), q.get("product"),
-                                      bool(q.get("ransomware")), q.get("severity"), num("min_score", float),
-                                      q.get("since"), num("days", int), min(num("limit", int, 50), 500))
+                    per = max(1, min(num("limit", int, 50), 500))
+                    page = max(1, num("page", int, 1))
+                    rows, total = query_rows(c, q.get("q", "").split(), q.get("vendor"), q.get("product"),
+                                             bool(q.get("ransomware")), q.get("severity"), num("min_score", float),
+                                             q.get("since"), num("days", int), per,
+                                             vendor_exact=bool(q.get("vendor_exact")), product_exact=bool(q.get("product_exact")),
+                                             offset=(page - 1) * per, with_total=True)
+                    if total and not rows:  # pagina fuera de rango: ir a la ultima
+                        page = -(-total // per)
+                        rows = query_rows(c, q.get("q", "").split(), q.get("vendor"), q.get("product"),
+                                          bool(q.get("ransomware")), q.get("severity"), num("min_score", float),
+                                          q.get("since"), num("days", int), per,
+                                          vendor_exact=bool(q.get("vendor_exact")), product_exact=bool(q.get("product_exact")), offset=(page - 1) * per)
                     ts = float(meta(c, "synced") or 0)
-                    out = {"count": len(rows), "cache": time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)),
+                    out = {"count": total, "page": page, "per_page": per, "pages": max(1, -(-total // per)),
+                           "cache": time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)),
                            "results": [{k: r[k] for k in ("cve", "vendor", "product", "name", "added",
                                                          "due", "ransomware", "score", "severity")} for r in rows]}
                     return self.send(200, json.dumps(out), "application/json")
