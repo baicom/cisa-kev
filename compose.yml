@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       USERS: ${USERS:-}
+      DAYS: ${DAYS:-30}   # dias que muestra la portada (0 = todo)
       KEV_REFRESH_HOURS: ${KEV_REFRESH_HOURS:-24}          # update incremental; 0 = desactivado
       KEV_FULL_REFRESH_DAYS: ${KEV_FULL_REFRESH_DAYS:-7}   # resync completo periodico
     healthcheck:

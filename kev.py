@@ -349,6 +349,7 @@ footer a{color:var(--mut)}footer a:hover{color:var(--fg)}
 <tbody id="b"></tbody></table></div><div id="pg" class="pg"></div></div>
 <script>
 const $=s=>document.querySelector(s),esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const HOME_DAYS=__DAYS__;
 let VENDOR_EXACT="",PRODUCT_EXACT="";
 const SEV=new Set(["CRITICAL","HIGH","MEDIUM","LOW"]);
 let PAGE_N=Math.max(1,parseInt(new URLSearchParams(location.search).get("page"))||1);
@@ -406,7 +407,7 @@ if(mv){
   if(pm){try{PRODUCT_EXACT=decodeURIComponent(pm[1])}catch(e){PRODUCT_EXACT=pm[1]}
     $("#f").product.value=PRODUCT_EXACT;document.title=PRODUCT_EXACT+" - CISA KEV";
     $("h1").insertAdjacentHTML("afterend",`<p class="mut">Producto: <b>${esc(PRODUCT_EXACT)}</b> - <a href="/">quitar filtro</a></p>`)}
-  if(!vm&&!pm)$("#f").days.value=30;  // portada: ultimos 30 dias (vaciar el campo para ver todo)
+  if(!vm&&!pm)if(HOME_DAYS>0)$("#f").days.value=HOME_DAYS;  // portada: ultimos DAYS dias (vaciar el campo para ver todo)
   go();
 }
 </script>
@@ -443,6 +444,14 @@ def parse_users(env):
             sys.exit("USERS invalido: formato user:pass,user2:pass2")
         users[u] = p
     return users
+
+
+def home_days():
+    """Dias que muestra la portada por defecto (env DAYS, default 30; 0 = todo el catalogo)."""
+    try:
+        return max(0, min(int(os.environ.get("DAYS") or 30), MAX_DAYS))
+    except ValueError:
+        return 30
 
 
 def make_handler(users, lock):
@@ -491,7 +500,7 @@ def make_handler(users, lock):
             u = urllib.parse.urlparse(self.path)
             q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
             if u.path == "/" or re.fullmatch(r"/(vuln/CVE-\d{4}-\d+|vendor/[^/]+|product/[^/]+)/?", u.path, re.I):
-                return self.send(200, PAGE, "text/html; charset=utf-8")
+                return self.send(200, PAGE.replace("__DAYS__", str(home_days())), "text/html; charset=utf-8")
             c = db()
             try:
                 if u.path == "/api/search":

@@ -40,3 +40,6 @@ docker compose run --rm cli show CVE-2021-44228 --details
 - Manual: `./kev.py update` (incremental) o `./kev.py sync` (completo); en Docker: `docker compose run --rm cli update`.
 
 La severidad se colorea (CRITICAL/HIGH rojo, MEDIUM naranja, LOW amarillo) en la web y en el CLI; el CLI no colorea si la salida no es una terminal o si está definida `NO_COLOR`.
+
+## Portada
+La portada muestra los últimos `DAYS` días (variable en `.env`, default 30; `0` = todo el catálogo). El campo "últimos N días" se puede editar o vaciar en la página. `/vendor/...` y `/product/...` no filtran por fecha.
